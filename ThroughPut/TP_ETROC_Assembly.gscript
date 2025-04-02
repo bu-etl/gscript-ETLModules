@@ -2,7 +2,7 @@
 # on position 1, 5, 9, and 13 (ie row 1), while Module PCB position 2 will use 
 # positions 2, 6, 10, and 14, and so on for Module PCB position 3 and 4
 
-VERSION v2.5
+VERSION v2.7
 SETLOG TP_ETROC_Assy_{timestamp}.txt
 CLEARLOG
 LOADCONFIG
@@ -59,13 +59,15 @@ COPY $mod_idx 0
         SETVAC etl_chuck_{$etroc_chuck_num}_pos_{$chip_loc} 1
         CALL @SURVEY_PART_FROM_CONFIG $etroc_chuck_num $chip_loc 2 -> $pos $rot
 
-        COPY $rot_fixed $rot
-        GOTOIF @FIX_ROT_SKIP `$chip_idx>2`
-        CALL @FIX_ROT $rot -> $rot_fixed
-        @FIX_ROT_SKIP
+        # Chips idx 3 and 4 are rotated 180 degrees.
+        # Pretend they are actually not rotated since they are staged at the same orientation 
+        # they will be installed at
+        GOTOIF @SKIP_ROT_INV `$chip_idx<3`
+            CALL @FLIP_CHIP_ROT $rot -> $rot
+        @SKIP_ROT_INV
 
         COPY &etroc_init_pos_{$chip_loc} $pos
-        COPY &etroc_init_rot_{$chip_loc} $rot_fixed
+        COPY &etroc_init_rot_{$chip_loc} $rot
         COPY &etroc_init_pos_num_{$mod_idx}_{$chip_idx} $chip_loc
 
         GOTOIFN @ETROC_SURVEY_INNER_LOOP_START &do_lgad_survey
@@ -82,7 +84,7 @@ COPY $mod_idx 0
     GOTO @ETROC_SURVEY_LOOP_START
 @ETROC_SURVEY_LOOP_END
 
-LOADTOOL etl_picker_tool
+LOADTOOL picker_tool
 
 COPY $mod_idx 0
 @ASSY_LOOP_START
@@ -252,7 +254,7 @@ END
     #  $start_pos - Position to initially search for the fiducial
     #  $piece - PCB or ETROC, 1 or 2 respectively
     #  $loc - tr == 1, br == 2, bl == 3, tl == 4
-    MOVETO $start_pos 100
+    MOVETO $start_pos 75
 
     # GOTO @manual_fiducial_acquisition
     COPY &vision.autofocus.step_size 0.1
@@ -272,15 +274,20 @@ END
     RETURN $fid_position
 
 
-@FIX_ROT(rot)
+
+@FLIP_CHIP_ROT(rot)
+    GOTOIF @POS `$rot>0`
+    GOTOIF @NEG `$rot<=0`
+    RETURN $rot
+    @POS RETURN `$rot-180`
+    @NEG RETURN `$rot+180`
+
+@CLIP_ROT_RANGE(rot)
     #Arguments:
-    #  rot - rotation that needs to be fixed due to calculation falling outside atan2's range
-    GOTOIF @POS `$rot>=0`
-    ADD $rot $rot 180 #not positive so add 180
+    #  rot - force angles to lie between +180 and -180 degrees
+    #          assuming argument lies in +360 to -360 degrees
+    GOTOIF @POS `$rot>=180`
+    GOTOIF @NEG `$rot<=-180`
     RETURN $rot
-
-    @POS
-    SUB $rot $rot 180 #This is positive so subtract 180
-    RETURN $rot
-
-
+    @POS RETURN `$rot-180`
+    @NEG RETURN `$rot+180`

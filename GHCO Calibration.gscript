@@ -1,115 +1,65 @@
 # This script is to configure the gantry's tool_holder_offset (ghco) vector in the flex_config
-VERSION v2.2
+VERSION v2.7
 CLEARLOG
 LOADCONFIG
-LOADCONFIG "" Config\etl_assembly_positions.txt
+LOADCONFIG "" Config\ETL\TP_Site_Config.txt
+LOADCONFIG "" Scripts\ETLModules\ThroughPut\TP_Config.txt
 
 SETLOG "LOG_Calibrate_GHCO.txt"
 
 HOME if-needed
-SETVAC gantry_head_inner 0
+SETVAC * 0
 
-COPY $bot_chuck_num 2
-COPY $target_pos {77.968,205.635,86.999}
-
-COPY $top_chuck_num 1
-COPY $top_pos_num 5
-
-COPY $iterations 6
+COPY $iterations 3
 COPY $step `360/$iterations`
 COPY $count 0
 
 @LOOP
-CHOICEPOPUP $_ "Ensure that the test part is staged."
+    ALERT "Ensure that the test part is staged."
 
-HOME if-needed
+    HOME if-needed
 
-SETVAC "etl_chuck_{$top_chuck_num}_pos_{$top_pos_num}" 1 #for top piece
+    SETVAC etl_chuck_1_pos_6 1 #for top piece
 
-MOVENAME "etl_chuck_{$top_chuck_num}"
-CALL @SURVEY_PART $top_chuck_num $top_pos_num 1 -> $top_pos $top_rot
+    MOVENAME etl_chuck_1
+    CALL @SURVEY_PART &default.ETROC.1.6.pos &default.ETROC.1.6.rot -> $init_pos $init_rot
 
-LOADTOOL etl_picker_tool
-PICKPART $top_pos $top_rot "etl_chuck_{$top_chuck_num}_pos_{$top_pos_num}" "etl_chuck_{$top_chuck_num}"
+    LOADTOOL picker_tool
+    PICKPART $init_pos $init_rot etl_chuck_1_pos_6 etl_chuck_1
 
-# target_rot = $step*$count - 180
-MUL $x $step $count
-SUB $target_rot $x 180
+    SUB $target_rot `$step*$count` 180
 
-PLACEPART $target_pos $target_rot "" "etl_chuck_{$bot_chuck_num}"
+    PLACEPART &default.ETROC.1.6.pos $target_rot etl_chuck_1_pos_6
 
-UNLOADTOOL
+    UNLOADTOOL
+    MOVENAME etl_chuck_1
 
-CALL @SURVEY_CORRECTED $bot_chuck_num $target_pos $target_rot -> $pos_corr $rot_corr
-MOVENAME "etl_chuck_{$bot_chuck_num}"
-SUB $delta $pos_corr $target_pos
-COPY [$count] $delta
+    CALL @SURVEY_PART  &default.ETROC.1.6.pos $target_rot -> $pos_corr $rot_corr
+    SUB $delta $pos_corr &default.ETROC.1.6.pos
+    COPY [$count] $delta
+    PRINT "%d) delta=%v @ %d degrees rotation" $count $delta $target_rot
+    SETVAC etl_chuck_1_pos_6 0
+    INC $count $count
+    GOTOIF @LOOP `$count<$iterations`
 
-INC $count $count
-GOTOIF @LOOP `$count<$iterations`
+FITCIRCLE $center $_ $_ 0 $iterations
+
+
+COPY $center.z 0
+ADD $new_offset &geometry.tool_holder_offset $center
+PRINT "New tool holder offset: %v" $new_offset
 
 END
 
-@SURVEY_CORRECTED(chuck_num,target_pos,target_rot)
-# Arguments:
-    #  $chuck_num - 
-    #  $pos - 
-    #  $rot -
-    FLEXREAD $tr_local geometry.ETL_Sensor_PCB_Mockup.fid_tr  
-    FLEXREAD $tl_local geometry.ETL_Sensor_PCB_Mockup.fid_tl
-    FLEXREAD $bl_local geometry.ETL_Sensor_PCB_Mockup.fid_bl
-    FLEXREAD $br_local geometry.ETL_Sensor_PCB_Mockup.fid_br
-
-    TRANSFORML2G $tr_global $tr_local $target_pos $target_rot
-    TRANSFORML2G $tl_global $tl_local $target_pos $target_rot
-    TRANSFORML2G $bl_global $bl_local $target_pos $target_rot
-    TRANSFORML2G $br_global $br_local $target_pos $target_rot
-
-    #this is to get corrected centers and orientation, the code above gives general area
-    MOVENAME "etl_chuck_{$chuck_num}"
-    #Routine to set up inital position of metal piece
-    CALL @ACQUIREFIDUCIAL $tl_global -> $tl_corrected
-    CALL @ACQUIREFIDUCIAL $tr_global -> $tr_corrected
-    CALL @ACQUIREFIDUCIAL $bl_global -> $bl_corrected
-    CALL @ACQUIREFIDUCIAL $br_global -> $br_corrected
-    
-    FIT $pos $rot ETL_Sensor_PCB_Mockup $tr_corrected $br_corrected $bl_corrected $tl_corrected
-    QUAT2EULER $phi $_ $_ $rot
-    RETURN $pos $phi
-
-@SURVEY_PART(chuck_num,pos_num,is_top)
-    # Arguments:
-    #  $chuck_num - 
-    #  $pos_num - 
-	   #  $is_top - 1 for survey position of top, 0 for bottom
+@SURVEY_PART(init_pos,init_rot)
 	
     SETLIGHT 40
 	
-	   GOTOIF @LOAD_TOP_DATA $is_top
-    FLEXREAD $tr_local geometry.ETL_mock_base.fid_tr  
-    FLEXREAD $tl_local geometry.ETL_mock_base.fid_tl
-    FLEXREAD $bl_local geometry.ETL_mock_base.fid_bl
-    FLEXREAD $br_local geometry.ETL_mock_base.fid_br
-
-    FLEXREAD $pos_default "default.ETL_mock_base.{$chuck_num}.{$pos_num}.pos"
-    FLEXREAD $rot_default "default.ETL_mock_base.{$chuck_num}.{$pos_num}.rot"
-    GOTO @END_LOAD
-	
-	   @LOAD_TOP_DATA
-    FLEXREAD $tr_local geometry.ETL_Sensor_PCB_Mockup.fid_tr  
-    FLEXREAD $tl_local geometry.ETL_Sensor_PCB_Mockup.fid_tl
-    FLEXREAD $bl_local geometry.ETL_Sensor_PCB_Mockup.fid_bl
-    FLEXREAD $br_local geometry.ETL_Sensor_PCB_Mockup.fid_br
-
-    FLEXREAD $pos_default "default.ETL_Sensor_PCB_Mockup.{$chuck_num}.{$pos_num}.pos"
-    FLEXREAD $rot_default "default.ETL_Sensor_PCB_Mockup.{$chuck_num}.{$pos_num}.rot"
-    @END_LOAD
-	
     #converts the local coordinates to global gantry coordinates usint start location and orientation
-    TRANSFORML2G $tr_global $tr_local $pos_default $rot_default
-    TRANSFORML2G $tl_global $tl_local $pos_default $rot_default
-    TRANSFORML2G $bl_global $bl_local $pos_default $rot_default
-    TRANSFORML2G $br_global $br_local $pos_default $rot_default
+    TRANSFORML2G $tr_global &geometry.ETROC.fid_tr $init_pos $init_rot
+    TRANSFORML2G $tl_global &geometry.ETROC.fid_tl $init_pos $init_rot
+    TRANSFORML2G $br_global &geometry.ETROC.fid_br $init_pos $init_rot
+    TRANSFORML2G $bl_global &geometry.ETROC.fid_bl $init_pos $init_rot
 
     #this is to get corrected centers and orientation, the code above gives general area
     #Routine to set up inital position of metal piece
@@ -119,12 +69,7 @@ END
     CALL @ACQUIREFIDUCIAL $br_global -> $br_corrected
 
     # Turns measured corners or fiducials into center and orientation
-	   GOTOIFN @FIT_TOP $is_top
-    FIT $pos $rot ETL_Sensor_PCB_Mockup $tr_corrected $br_corrected $bl_corrected $tl_corrected
-    GOTO @FINISH_SURVEY
-	   @FIT_TOP
-	   FIT $pos $rot ETL_mock_base $tr_corrected $br_corrected $bl_corrected $tl_corrected
-    @FINISH_SURVEY
+    FIT $pos $rot $res ETROC $tr_corrected $br_corrected $bl_corrected $tl_corrected
     QUAT2EULER $phi $_ $_ $rot
     RETURN $pos $phi
 
@@ -135,10 +80,12 @@ END
     MOVETO $start_pos 50
     WAIT 100
 
-    GOTO @manual_fiducial_acquisition
+    # GOTO @manual_fiducial_acquisition
+    COPY &vision.autofocus.step_size 0.1
+    AUTOFOCUS $_ 1 "" autoclose
 
     SETERRORMODE setvar
-    FINDFID $fid_position ETL_PCB_Mockup
+    FINDFID $fid_position ETROC
     GOTOIF @manual_fiducial_acquisition $ERR
     SETERRORMODE default
     RETURN $fid_position
