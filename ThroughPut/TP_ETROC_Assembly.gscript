@@ -262,7 +262,7 @@ END
 
     SETERRORMODE setvar
     WAIT 50
-    FINDFID $fid_position etl_throughput_etroc
+    FINDFID $fid_position ETROC
     GOTOIF @manual_fiducial_acquisition $ERR
     SETERRORMODE default
     RETURN $fid_position
