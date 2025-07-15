@@ -1,0 +1,266 @@
+# We assume that assembly on Module PCB position 1 will use ETROC+LGAD subassemblies
+# on position 1, 2, 3, 4 (ie row 1), while Module PCB position 2 will use 
+# positions 5, 6, 7, and 8, and so on for Module PCB position 3 and 4
+
+VERSION v2.8
+SETLOG D4_ETROC_Assy_{timestamp}.txt
+CLEARLOG
+CLEARVARS
+LOADCONFIG
+LOADCONFIG "" "Scripts\ETLModules\Digital V4\D4_Config.txt"
+LOADCONFIG "" Config\ETL\D4_Site_Config.txt
+
+
+DIALOG "Scripts\ETLModules\Digital V4\Assembly_Setup_Dialog.ini"
+
+HOME if-needed
+
+PRINT "Assembly Start"
+
+SETVAC etl_chuck_{$pcb_chuck_num} 1  # vacuum for assembly plate
+MOVENAME etl_chuck_{$pcb_chuck_num}
+
+COPY $mod_idx 0
+@PCB_SURVEY_LOOP_START
+    INC $mod_idx
+    GOTOIF @PCB_SURVEY_LOOP_END `$mod_idx>4`
+    GOTOIFN @PCB_SURVEY_LOOP_START &enabled_{$mod_idx}
+    PRINT "Begin Survey of Module PCB %d, ID=%d" $mod_idx &id_{$mod_idx}
+
+    CALL @SURVEY_PART_FROM_CONFIG $pcb_chuck_num $mod_idx 1 -> $pos $rot
+    COPY &pcb_init_pos_{$mod_idx} $pos
+    COPY &pcb_init_rot_{$mod_idx} $rot
+
+ #   TRANSFORML2G &etroc_target_pos_{$mod_idx}_0 &geometry.Module_PCB.ETROC_0 $pos $rot
+ #   TRANSFORML2G &etroc_target_pos_{$mod_idx}_1 &geometry.Module_PCB.ETROC_1 $pos $rot
+ #   TRANSFORML2G &etroc_target_pos_{$mod_idx}_2 &geometry.Module_PCB.ETROC_2 $pos $rot
+ #   TRANSFORML2G &etroc_target_pos_{$mod_idx}_3 &geometry.Module_PCB.ETROC_3 $pos $rot
+
+    GOTO @PCB_SURVEY_LOOP_START
+@PCB_SURVEY_LOOP_END
+
+MOVENAME "etl_chuck_1"
+
+COPY $mod_idx 0
+@ETROC_SURVEY_LOOP_START
+    INC $mod_idx $mod_idx
+    GOTOIF @ETROC_SURVEY_LOOP_END `$mod_idx>4`
+    GOTOIFN @ETROC_SURVEY_LOOP_START &enabled_{$mod_idx}
+    PRINT "Begin Survey of ETROCs for Module %d, ID=%d" $mod_idx &id_{$mod_idx}
+
+    COPY $chip_idx 0
+    @ETROC_SURVEY_INNER_LOOP_START
+        INC $chip_idx $chip_idx
+        GOTOIF @ETROC_SURVEY_INNER_LOOP_END `$chip_idx>4`
+
+        MUL $loc_offset 4 `$mod_idx-1`
+        ADD $chip_loc $loc_offset $chip_idx 
+        SETVAC etl_chuck_1_pos_{$chip_loc} 1
+        CALL @SURVEY_PART_FROM_CONFIG 1 $chip_loc 2 -> $pos $rot
+
+        # Chips idx 3 and 4 are rotated 180 degrees.
+        # Pretend they are actually not rotated since they are staged at the same orientation 
+        # they will be installed at
+        GOTOIF @SKIP_ROT_INV `$chip_idx<3`
+            CALL @FLIP_CHIP_ROT $rot -> $rot
+        @SKIP_ROT_INV
+
+        COPY &etroc_init_pos_{$chip_loc} $pos
+        COPY &etroc_init_rot_{$chip_loc} $rot
+        COPY &etroc_init_pos_num_{$mod_idx}_{$chip_idx} $chip_loc
+
+        GOTO @ETROC_SURVEY_INNER_LOOP_START
+    @ETROC_SURVEY_INNER_LOOP_END
+
+
+    GOTO @ETROC_SURVEY_LOOP_START
+@ETROC_SURVEY_LOOP_END
+
+LOADTOOL picker_tool
+
+COPY $mod_idx 0
+@ASSY_LOOP_START
+    INC $mod_idx $mod_idx
+    GOTOIF @ASSY_LOOP_END `$mod_idx>4`
+    GOTOIFN @ASSY_LOOP_START &enabled_{$mod_idx}
+    PRINT "Begin pick-and-place for Module %d, ID=%d" $mod_idx &id_{$mod_idx}
+
+    CALL @PICK_AND_PLACE $pcb_chuck_num $mod_idx 1 1    
+    CALL @PICK_AND_PLACE $pcb_chuck_num $mod_idx 1 2    
+    CALL @PICK_AND_PLACE $pcb_chuck_num $mod_idx 1 3    
+    CALL @PICK_AND_PLACE $pcb_chuck_num $mod_idx 1 4    
+
+    GOTO @ASSY_LOOP_START
+@ASSY_LOOP_END
+
+UNLOADTOOL
+
+SETVAC etl_chuck_{$pcb_chuck_num} 0  # vacuum for assembly plate
+
+PRINT "Assembly Completed"
+MOVENAME home
+END
+
+
+@PICK_AND_PLACE(pcb_chuck_num,pcb_pos_num,etroc_chuck_num,etroc_pos_num)
+#Arguments
+#    pcb_chuck_num = chuck number of the Module PCB
+#    pcb_pos_num = position number of the Module PCB
+#    etroc_chuck_num = chuck number of ETROC+LGAD subasssemblies
+#    etroc_pos_num = position on the module PCB (1-4)
+
+    COPY $pcb_pos &pcb_init_pos_{$pcb_pos_num}
+    COPY $pcb_rot &pcb_init_rot_{$pcb_pos_num}
+    COPY $etroc_init_pos_num &etroc_init_pos_num_{$pcb_pos_num}_{$etroc_pos_num}
+    COPY $etroc_init_pos &etroc_init_pos_{$etroc_init_pos_num}
+    COPY $etroc_init_rot &etroc_init_rot_{$etroc_init_pos_num}
+
+    FLEXREAD $chip_assignment chip_assy.{$etroc_pos_num}
+    TRANSFORML2G $etroc_target_pos &geometry.Module_PCB.ETROC_{$chip_assignment} $pcb_pos $pcb_rot
+
+    SUB $etroc_target_pos.z $etroc_target_pos.z &etroc_thickness
+
+    MOVENAME etl_chuck_{$etroc_chuck_num} "" direct
+    PICKPART $etroc_init_pos $etroc_init_rot etl_chuck_{$etroc_chuck_num}_pos_{$etroc_init_pos_num}
+    MOVENAME etl_chuck_{$pcb_chuck_num} "" direct
+    PLACEPART $etroc_target_pos $pcb_rot
+
+    RETURN
+
+@SURVEY_PART_FROM_CONFIG(chuck_num,pos_num,part_id)
+    # Arguments:
+    #  $chuck_num - 
+    #  $pos_num - 
+    #   part_id=1 => Module PCB
+    #   part_id=2 => ETROC
+    # Returns
+    #  $pos - center of part
+    #  $phi - rotation of part in x-y plane
+
+    GOTOIF @SPC_MODULE_PCB `$part_id==1`
+    GOTOIF @SPC_ETROC `$part_id==2`
+    
+    @SPC_MODULE_PCB
+      COPY $pos_default &default.Module_PCB.{$chuck_num}.{$pos_num}.pos
+      COPY $rot_default &default.Module_PCB.{$chuck_num}.{$pos_num}.rot
+      SETLIGHT 30
+    GOTO @SPC_END_LOAD
+
+    @SPC_ETROC
+      COPY $pos_default &default.ETROC.{$chuck_num}.{$pos_num}.pos
+      COPY $rot_default &default.ETROC.{$chuck_num}.{$pos_num}.rot
+      SETLIGHT 8
+    GOTO @SPC_END_LOAD
+
+    @SPC_END_LOAD
+    CALL @SURVEY_PART $pos_default $rot_default $part_id -> $pos $phi
+    RETURN $pos $phi
+
+
+@SURVEY_PART(pos_default,rot_default,part_id)
+    # Arguments:
+    #  $chuck_num - 
+    #  $pos_num - 
+    #   part_id=1 => Module PCB
+    #   part_id=2 => ETROC
+    # Returns
+    #  $pos - center of part
+    #  $phi - rotation of part in x-y plane
+
+    GOTOIF @SP_MODULE_PCB `$part_id==1`
+    GOTOIF @SP_ETROC `$part_id==2`
+    
+    @SP_MODULE_PCB
+      COPY $tr_local &geometry.Module_PCB.fid_tr  
+      COPY $tl_local &geometry.Module_PCB.fid_tl
+      COPY $bl_local &geometry.Module_PCB.fid_bl
+      COPY $br_local &geometry.Module_PCB.fid_br
+    GOTO @SP_END_LOAD
+
+    @SP_ETROC
+      COPY $tr_local &geometry.ETROC.fid_tr  
+      COPY $tl_local &geometry.ETROC.fid_tl
+      COPY $bl_local &geometry.ETROC.fid_bl
+      COPY $br_local &geometry.ETROC.fid_br
+    GOTO @SP_END_LOAD
+
+    @SP_END_LOAD
+    #converts the local coordinates to global gantry coordinates usint start location and orientation
+    TRANSFORML2G $tr_global $tr_local $pos_default $rot_default
+    TRANSFORML2G $tl_global $tl_local $pos_default $rot_default
+    TRANSFORML2G $bl_global $bl_local $pos_default $rot_default
+    TRANSFORML2G $br_global $br_local $pos_default $rot_default
+
+    #this is to get corrected centers and orientation, the code above gives general area
+    CALL @ACQUIREFIDUCIAL $tr_global $part_id 1 -> $tr_corrected
+    CALL @ACQUIREFIDUCIAL $br_global $part_id 2 -> $br_corrected
+    CALL @ACQUIREFIDUCIAL $tl_global $part_id 4 -> $tl_corrected
+    CALL @ACQUIREFIDUCIAL $bl_global $part_id 3 -> $bl_corrected
+
+    # Turns measured corners or fiducials into center and orientation
+    GOTOIF @FIT_MODULE_PCB `$part_id==1`
+    GOTOIF @FIT_ETROC `$part_id==2`
+
+    @FIT_MODULE_PCB
+      FIT $pos $rot $_ Module_PCB $tr_corrected $br_corrected $bl_corrected $tl_corrected
+      GOTO @FINISH_SURVEY
+    @FIT_ETROC
+      FIT $pos $rot $_ ETROC $tr_corrected $br_corrected $bl_corrected $tl_corrected
+      GOTO @FINISH_SURVEY
+
+    @FINISH_SURVEY
+    QUAT2EULER $phi $_ $_ $rot
+    RETURN $pos $phi
+
+@ACQUIREFIDUCIAL(start_pos,part_id,loc)
+    # Arguments:
+    #  $start_pos - Position to initially search for the fiducial
+    #  $piece - PCB or ETROC, 1 or 2 respectively
+    #  $loc - tr == 1, br == 2, bl == 3, tl == 4
+    MOVETO $start_pos 75
+
+    GOTO @manual_fiducial_acquisition
+    # COPY &vision.autofocus.step_size 0.1
+    # AUTOFOCUS $_ 1 "" autoclose
+
+    SETERRORMODE setvar
+    WAIT 50
+
+    GOTOIF FINDFID_PCB `$part_id==1`
+    GOTOIF FINDFID_ETROC `$part_id==2`
+
+    @FINDFID_PCB 
+      FINDFID $fid_position PCBV4
+      GOTO @END_FINDFID
+    @FINDFID_ETROC 
+      FINDFID $fid_position "ETROC_{$loc}"
+      GOTO @END_FINDFID
+
+    @END_FINDFID
+    GOTOIF @manual_fiducial_acquisition $ERR
+    SETERRORMODE default
+    RETURN $fid_position
+    
+    @manual_fiducial_acquisition
+    SETERRORMODE default
+    VIDEO
+    getpos $fid_position
+    RETURN $fid_position
+
+
+@FLIP_CHIP_ROT(rot)
+    GOTOIF @POS `$rot>0`
+    GOTOIF @NEG `$rot<=0`
+    RETURN $rot
+    @POS RETURN `$rot-180`
+    @NEG RETURN `$rot+180`
+
+@CLIP_ROT_RANGE(rot)
+    #Arguments:
+    #  rot - force angles to lie between +180 and -180 degrees
+    #          assuming argument lies in +360 to -360 degrees
+    GOTOIF @POS `$rot>=180`
+    GOTOIF @NEG `$rot<=-180`
+    RETURN $rot
+    @POS RETURN `$rot-180`
+    @NEG RETURN `$rot+180`
